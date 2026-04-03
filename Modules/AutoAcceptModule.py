@@ -94,11 +94,8 @@ class AutoAcceptModule:
 
         self._register_same_match(top_match_id, seen_count=top_count)
 
-        lifted = lobbyManager.lift_all_cs2_windows()
-        if lifted:
-            time.sleep(0.5)
-
-        self._accept_for_accounts(matched_accounts)
+        for acc in matched_accounts:
+            acc.last_match_id = None
 
     def start(self):
         if not self._running:
