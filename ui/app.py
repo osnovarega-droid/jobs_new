@@ -2679,11 +2679,11 @@ class App(customtkinter.CTk):
 
         customtkinter.CTkLabel(
             content,
-            text="AppID игр (до 5, через запятую, 0 = случайные):",
+            text="AppID игр (пример: 730,0 => 730 + 3 случайные; 0 = добивка до 4):",
             justify="left",
             wraplength=320,
         ).grid(row=4, column=0, columnspan=2, padx=12, pady=(8, 2), sticky="w")
-        games_entry = customtkinter.CTkEntry(content, width=220, placeholder_text="730,570,440")
+        games_entry = customtkinter.CTkEntry(content, width=220, placeholder_text="730,0")
         games_entry.grid(row=5, column=0, columnspan=2, padx=12, pady=(2, 8), sticky="ew")
         games_entry.insert(0, games_initial)
 
@@ -2703,23 +2703,21 @@ class App(customtkinter.CTk):
                     return None
 
                 token_values = [int(token) for token in tokens]
-                if 0 in token_values:
-                    game_appids = []
-                else:
-                    parsed = []
-                    seen = set()
-                    for app_id in token_values:
-                        if app_id <= 0:
-                            self.log_manager.add_log("❌ Booster settings: AppID должны быть > 0 или 0 для случайных игр")
-                            return None
-                        if app_id in seen:
-                            continue
-                        parsed.append(app_id)
-                        seen.add(app_id)
-                    if len(parsed) > 5:
-                        self.log_manager.add_log("❌ Booster settings: максимум 5 AppID")
+                parsed = []
+                seen = set()
+                for app_id in token_values:
+                    if app_id < 0:
+                        self.log_manager.add_log("❌ Booster settings: AppID должны быть > 0 или 0 для случайной добивки")
                         return None
-                    game_appids = parsed
+            
+                    if app_id in seen:
+                        continue
+                    parsed.append(app_id)
+                    seen.add(app_id)
+                if len(parsed) > 8:
+                    self.log_manager.add_log("❌ Booster settings: максимум 8 значений")
+                    return None
+                game_appids = parsed
             else:
                 game_appids = []
 
@@ -2761,6 +2759,8 @@ class App(customtkinter.CTk):
             self.settings_manager.set("ActivityBoosterMinMinutes", min_minutes)
             self.settings_manager.set("ActivityBoosterMaxMinutes", max_minutes)
             self.settings_manager.set("ActivityBoosterGameAppIds", game_appids)
+            # старые локальные game_appids (например 730,440) вместо новых глобальных.
+            self.settings_manager.set("ActivityBoosterAccounts", {})
             games_info = ",".join(str(x) for x in game_appids) if game_appids else "случайные игры"
             self.log_manager.add_log(
                 f"✅ Booster settings для всех сохранены: {min_minutes}-{max_minutes} мин., игры: {games_info}"
