@@ -1570,6 +1570,7 @@ class App(customtkinter.CTk):
             title="Auto match in start",
             description="После 4 запуска CS2 ждёт 25с и начинает игру.",
             setting_key="AutoMatchInStartEnabled",
+            on_toggle=self._on_auto_match_toggle,
             default=True,
         )
         self.config_toggle_auto_account_switching = self._create_labeled_switch(
@@ -1578,9 +1579,20 @@ class App(customtkinter.CTk):
             title="Automatic account switching",
             description="Автоматическая смена аккаунтов после отфарма",
             setting_key="AutomaticAccountSwitchingEnabled",
+            on_toggle=self._on_auto_account_switching_toggle,
             default=True,
         )
-
+        self.config_toggle_manual_farm = self._create_labeled_switch(
+            switches_card,
+            row=4,
+            title="Manual farm",
+            description="Отключает всю авто-логику и оставляет только ручные действия из UI.",
+            setting_key="ManualFarmEnabled",
+            on_toggle=self._on_manual_farm_toggle,
+            default=False,
+        )
+        if bool(self.settings_manager.get("ManualFarmEnabled", False)):
+            self._on_manual_farm_toggle(True)
 
         paths_card = customtkinter.CTkFrame(card, fg_color=BG_CARD_ALT, corner_radius=10, border_width=1, border_color=BG_BORDER)
         paths_card.grid(row=0, column=1, padx=(4, 8), pady=8, sticky="nsew")
@@ -1734,6 +1746,13 @@ class App(customtkinter.CTk):
             status.configure(text="✔", text_color=ACCENT_GREEN)
 
     def _on_auto_accept_toggle(self, enabled):
+        if enabled and bool(self.settings_manager.get("ManualFarmEnabled", False)):
+            self.settings_manager.set("AutoAcceptEnabled", False)
+            switch = getattr(self, "config_toggle_auto_accept", None)
+            if switch:
+                switch.deselect()
+            self.log_manager.add_log("🧰 Manual farm: Auto accept заблокирован")
+            enabled = False
         try:
             self.main_menu._lobbyManager.auto_accept = enabled
         except Exception:
@@ -1748,7 +1767,40 @@ class App(customtkinter.CTk):
         except Exception:
             pass
 
+    def _on_manual_farm_toggle(self, enabled):
+        if not enabled:
+            self.log_manager.add_log("ℹ️ Manual farm: OFF")
+            return
 
+        self.log_manager.add_log("🧰 Manual farm: ON — авто-логика отключена")
+        forced_off_keys = (
+            ("AutoAcceptEnabled", getattr(self, "config_toggle_auto_accept", None), self._on_auto_accept_toggle),
+            ("AutoMatchInStartEnabled", getattr(self, "config_toggle_auto_match", None), None),
+            ("AutomaticAccountSwitchingEnabled", getattr(self, "config_toggle_auto_account_switching", None), None),
+        )
+
+        for key, switch, callback in forced_off_keys:
+            self.settings_manager.set(key, False)
+            if switch:
+                switch.deselect()
+            if callback:
+                callback(False)
+
+    def _on_auto_match_toggle(self, enabled):
+        if enabled and bool(self.settings_manager.get("ManualFarmEnabled", False)):
+            self.settings_manager.set("AutoMatchInStartEnabled", False)
+            switch = getattr(self, "config_toggle_auto_match", None)
+            if switch:
+                switch.deselect()
+            self.log_manager.add_log("🧰 Manual farm: Auto match in start заблокирован")
+
+    def _on_auto_account_switching_toggle(self, enabled):
+        if enabled and bool(self.settings_manager.get("ManualFarmEnabled", False)):
+            self.settings_manager.set("AutomaticAccountSwitchingEnabled", False)
+            switch = getattr(self, "config_toggle_auto_account_switching", None)
+            if switch:
+                switch.deselect()
+            self.log_manager.add_log("🧰 Manual farm: Automatic account switching заблокирован")
 
     # ---------------- License logic ----------------
     def get_hwid(self):
@@ -3751,21 +3803,27 @@ class App(customtkinter.CTk):
         return "\n".join(lines)
 
     def _telegram_get_config(self):
-        keys = ["AutoAcceptEnabled", "AutoMatchInStartEnabled", "AutomaticAccountSwitchingEnabled"]
+        keys = ["AutoAcceptEnabled", "AutoMatchInStartEnabled", "AutomaticAccountSwitchingEnabled", "ManualFarmEnabled"]
         return {key: bool(self.settings_manager.get(key, False)) for key in keys}
 
     def _telegram_set_config(self, key, enabled):
-        if key not in {"AutoAcceptEnabled", "AutoMatchInStartEnabled", "AutomaticAccountSwitchingEnabled"}:
+        if key not in {"AutoAcceptEnabled", "AutoMatchInStartEnabled", "AutomaticAccountSwitchingEnabled", "ManualFarmEnabled"}:
             return
         self.settings_manager.set(key, bool(enabled))
         if key == "AutoAcceptEnabled":
             self._on_auto_accept_toggle(bool(enabled))
-
+        elif key == "AutoMatchInStartEnabled":
+            self._on_auto_match_toggle(bool(enabled))
+        elif key == "AutomaticAccountSwitchingEnabled":
+            self._on_auto_account_switching_toggle(bool(enabled))
+        elif key == "ManualFarmEnabled":
+            self._on_manual_farm_toggle(bool(enabled))
         def sync_switch():
             mapping = {
                 "AutoAcceptEnabled": getattr(self, "config_toggle_auto_accept", None),
                 "AutoMatchInStartEnabled": getattr(self, "config_toggle_auto_match", None),
                 "AutomaticAccountSwitchingEnabled": getattr(self, "config_toggle_auto_account_switching", None),
+                "ManualFarmEnabled": getattr(self, "config_toggle_manual_farm", None),
             }
             switch = mapping.get(key)
             if not switch:
