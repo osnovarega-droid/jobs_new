@@ -91,7 +91,7 @@ class AutoAcceptModule:
         matched_accounts = [acc for acc in accounts if acc.last_match_id == top_match_id]
 
         self._register_same_match(top_match_id, seen_count=top_count)
-
+        self._accept_for_accounts(matched_accounts)
         for acc in matched_accounts:
             acc.last_match_id = None
 
