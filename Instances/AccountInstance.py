@@ -119,6 +119,8 @@ SetWindowText.restype = wintypes.BOOL
 # Константы
 SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
+SWP_NOSIZE = 0x0001
+SWP_SHOWWINDOW = 0x0040
 
 def fix_window(hwnd):
     if not hwnd:
@@ -644,6 +646,7 @@ class Account:
                 app = Application(backend="uia").connect(process=pid)
                 for win in app.windows():
                     win.set_focus()
+                    hwnd = win.handle
                     all_descendants = win.descendants()
                     edits = [c for c in all_descendants if c.friendly_class_name() == "Edit"]
                     buttons = [c for c in all_descendants if c.friendly_class_name() == "Button"]
@@ -660,7 +663,30 @@ class Account:
                     if any(btn.window_text().strip() == "Play anyway" for btn in buttons):
                         target = next((btn for btn in buttons if btn.window_text().strip() == "Play anyway"), None)
                         if target:
-                            target.click()
+                            # Поднимаем Cloud-конфликт поверх остальных окон, чтобы клик всегда проходил.
+                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                            win32gui.SetWindowPos(
+                                hwnd,
+                                win32con.HWND_TOPMOST,
+                                0,
+                                0,
+                                0,
+                                0,
+                                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+                            )
+                            win32gui.SetForegroundWindow(hwnd)
+                            time.sleep(0.1)
+                            target.click_input()
+                            # Возвращаем обычный z-order после нажатия.
+                            win32gui.SetWindowPos(
+                                hwnd,
+                                win32con.HWND_NOTOPMOST,
+                                0,
+                                0,
+                                0,
+                                0,
+                                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+                            )
                     if any(btn.window_text().strip().lower() == "no thanks".lower() for btn in buttons):
                         target = next(
                             (btn for btn in buttons if btn.window_text().strip().lower() == "no thanks".lower()), None)
