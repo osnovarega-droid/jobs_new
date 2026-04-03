@@ -404,6 +404,7 @@ class TelegramBotManager:
             ("Auto accept game", "AutoAcceptEnabled"),
             ("Auto match in start", "AutoMatchInStartEnabled"),
             ("Automatic account switching", "AutomaticAccountSwitchingEnabled"),
+            ("Manual farm", "ManualFarmEnabled"),
         ]
 
         for title, key in mapping:
