@@ -41,8 +41,8 @@ class MatchState(Enum):
 
 T_ACTIONS_LONG = T_ACTIONS_SECOND = [
     ("W+D", 4.5), ("S", 0.05), ("A", 1.1), ("S", 3.3),
-    ("W", 0.1), ("A", 1.1),("S", 2.5),("D", 2.3),("D+S", 3.2),("Shift+W+D", 0.15), ("E", 0),
-    ("D+S", 1.6), ("S", 3.2), ("D", 3),("D+S", 0.1), ("2", 0), ("1", 0)
+    ("W", 0.1), ("A", 1.1),("S", 2.5),("D", 2.3),("D+S", 3.2),("Shift+W+D", 0.10), ("E", 0.1),
+    ("D+S", 1.6), ("S", 3.2), ("Shift+W+D", 0.15), ("D", 2.8),("D+S", 0.13), ("2", 0), ("1", 0)
     
 ]
 
@@ -106,8 +106,9 @@ class GSIManager:
         self.login_to_pid = self._load_runtime_data()
 
         # mafiles
-        self.mafiles_dir = "mafiles"
+        self.mafiles_dirs = ["mafiles", "maFiles"]
         self.steamid_login_cache = {}
+        self._mafiles_index_built = False
 
         self._register_routes()
         self._initialized = True
@@ -240,23 +241,63 @@ class GSIManager:
     # =========================
     # MAFILE
     # =========================
+    def _iter_mafile_paths(self):
+        paths = []
+        for mafiles_dir in self.mafiles_dirs:
+            if not os.path.isdir(mafiles_dir):
+                continue
+
+            try:
+                for filename in os.listdir(mafiles_dir):
+                    if filename.lower().endswith(".mafile"):
+                        paths.append(os.path.join(mafiles_dir, filename))
+            except Exception:
+                continue
+
+        return paths
+
+    def _build_mafiles_index(self):
+        self.steamid_login_cache.clear()
+
+        for path in self._iter_mafile_paths():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                continue
+
+            steam_id = str(
+                data.get("Session", {}).get("SteamID")
+                or data.get("steamid")
+                or data.get("SteamID")
+                or ""
+            ).strip()
+            if not steam_id:
+                continue
+
+            login = (data.get("account_name") or "").strip()
+            if not login:
+                login = os.path.splitext(os.path.basename(path))[0]
+
+            self.steamid_login_cache[steam_id] = login
+
+        self._mafiles_index_built = True
+
     def _login_from_mafile(self, steamid):
-        if steamid in self.steamid_login_cache:
-            return self.steamid_login_cache[steamid]
-
-        path = os.path.join(self.mafiles_dir, f"{steamid}.mafile")
-        if not os.path.exists(path):
+        steamid = str(steamid or "").strip()
+        if not steamid:
             return None
 
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            login = data.get("account_name")
-            if login:
-                self.steamid_login_cache[steamid] = login
+        if not self._mafiles_index_built:
+            self._build_mafiles_index()
+
+        login = self.steamid_login_cache.get(steamid)
+        if login:
             return login
-        except:
-            return None
+
+        # mafile могли добавить во время работы — делаем одноразовый рефреш
+        self._build_mafiles_index()
+        return self.steamid_login_cache.get(steamid)
 
     # =========================
     # ROUND LOGS
