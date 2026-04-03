@@ -92,7 +92,8 @@ function scheduleNextRotate() {
     }, nextMs);
 }
 
-function startRandomActivity() {
+function startRandomActivity() { 
+    client.setPersona(SteamUser.EPersonaState.Online);
     startedPlaying = true;
     const selected = composeCurrentActivity();
     if (selected.length === 0) {
@@ -101,9 +102,8 @@ function startRandomActivity() {
     }
 
     console.log(`Playing appids: ${selected.join(', ')}`);
-    client.setPersona(SteamUser.EPersonaState.Online);
-    client.gamesPlayed(selected, true);
-}
+    client.gamesPlayed(selected, true); 
+} 
 
 function shutdown(code = 0) {
     if (isShuttingDown) {
@@ -151,6 +151,7 @@ function scheduleReconnect(reason) {
     const delaySeconds = Math.min(45, reconnectAttempts * 7);
     console.log(`[${login}] Reconnect attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} in ${delaySeconds}s (${reason})`);
     reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
         if (isShuttingDown) {
             return;
         }
@@ -212,11 +213,10 @@ client.on('ownershipCached', async () => {
             shutdown(5); 
             return; 
         } 
-
+ 
         if (rawPreferredAppIds.length > 0) {
-            const availableSet = new Set(availableGameIds);
             fixedPlayableIds = rawPreferredAppIds
-                .filter((id) => id > 0 && availableSet.has(id))
+                .filter((id) => id > 0)
                 .slice(0, 4);
             const requestedFixed = rawPreferredAppIds.filter((id) => id > 0).slice(0, 4);
             const hasRandomToken = rawPreferredAppIds.includes(0);
@@ -225,7 +225,7 @@ client.on('ownershipCached', async () => {
 
             if (requestedFixed.length > 0 && fixedPlayableIds.length !== requestedFixed.length) {
                 const missing = requestedFixed.filter((id) => !fixedPlayableIds.includes(id));
-                console.warn(`[${login}] Requested appids are not in library and will be ignored: ${missing.join(', ')}`);
+                console.warn(`[${login}] Requested appids are invalid and will be ignored: ${missing.join(', ')}`);
             }
 
             if (mustPlayIds.length === 0 && randomSlotsCount === 0) {
