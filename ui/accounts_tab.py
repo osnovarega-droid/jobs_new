@@ -3,6 +3,7 @@ import re
 import shutil
 import threading
 import subprocess
+from collections import deque
 import customtkinter
 import time
 import keyboard
@@ -42,6 +43,33 @@ class AccountsControl(customtkinter.CTkTabview):
         
         self.accounts_list.set_control_frame(self)
         self.booster_processes = {}
+        self.booster_log_files = {}
+
+    def _close_booster_log(self, login):
+        log_info = self.booster_log_files.pop(login, None)
+        if not log_info:
+            return
+        handle = log_info.get("handle")
+        if handle:
+            try:
+                handle.close()
+            except Exception:
+                pass
+
+    @staticmethod
+    def _tail_text_file(file_path, max_lines=25):
+        if not file_path or not os.path.isfile(file_path):
+            return ""
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as fh:
+                tail = deque(fh, maxlen=max_lines)
+            for line in reversed(tail):
+                text = (line or "").strip()
+                if text:
+                    return text
+        except Exception:
+            return ""
+        return ""
 
     def _restore_account_color(self, account):
         if self.accounts_list and self.accounts_list.is_farmed_account(account):
@@ -158,6 +186,7 @@ class AccountsControl(customtkinter.CTkTabview):
                 self._logManager.add_log(f"❌ [{acc.login}] Ошибка остановки booster: {exc}")
             finally:
                 self.booster_processes.pop(acc.login, None)
+                self._close_booster_log(acc.login)
 
         if stopped > 0:
             self._logManager.add_log(f"🛑 Stop booster: остановлено {stopped} аккаунтов")
@@ -181,6 +210,7 @@ class AccountsControl(customtkinter.CTkTabview):
                 if acc:
                     self._restore_account_color(acc)
                 self.booster_processes.pop(login, None)
+                self._close_booster_log(login)
         else:
             print("⚠️ Нет ссылки на accounts_list")
 
@@ -494,6 +524,8 @@ class AccountsControl(customtkinter.CTkTabview):
             return
 
         self._logManager.add_log(f"🎮 Start booster: {len(selected_accounts)} аккаунтов")
+        logs_dir = os.path.join(project_root, "logs", "activity_booster")
+        os.makedirs(logs_dir, exist_ok=True)
 
         for acc in selected_accounts:
             min_minutes, max_minutes, game_appids = self._resolve_booster_settings(acc)
@@ -511,6 +543,7 @@ class AccountsControl(customtkinter.CTkTabview):
             if existing and existing.poll() is None:
                 self._logManager.add_log(f"⚠️ [{acc.login}] booster уже запущен")
                 continue
+            self._close_booster_log(acc.login)
 
             cmd = [
                 "node",
@@ -524,30 +557,45 @@ class AccountsControl(customtkinter.CTkTabview):
                 ",".join(str(x) for x in game_appids),
             ]
             try:
+                started_at = time.strftime("%Y%m%d_%H%M%S")
+                log_path = os.path.join(logs_dir, f"{acc.login}_{started_at}.log")
+                log_handle = open(log_path, "a", encoding="utf-8", errors="replace")
                 proc = subprocess.Popen(
                     cmd,
                     cwd=project_root,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=log_handle,
+                    stderr=log_handle,
                     env={**os.environ, "NODE_NO_WARNINGS": "1"},
                 )
                 time.sleep(1)
                 if proc.poll() is not None:
+                    try:
+                        log_handle.flush()
+                    except Exception:
+                        pass
+                    try:
+                        log_handle.close()
+                    except Exception:
+                        pass
+                    reason = self._tail_text_file(log_path)
+                    reason_suffix = f" Причина: {reason}" if reason else ""
                     self._logManager.add_log(
                         f"❌ [{acc.login}] Activity booster завершился сразу после запуска. "
-                        "Проверьте shared_secret/пароль и список appid."
+                        f"Код выхода: {proc.returncode}.{reason_suffix}"
                     )
                     continue
                 self.booster_processes[acc.login] = proc
+                self.booster_log_files[acc.login] = {"path": log_path, "handle": log_handle}
                 acc.setColor("#4f8cff")
                 games_info = ",".join(str(x) for x in game_appids) if game_appids else "random"
                 self._logManager.add_log(
-                    f"✅ [{acc.login}] Activity booster запущен ({min_minutes}-{max_minutes} мин., games: {games_info})"
+                    f"✅ [{acc.login}] Activity booster запущен ({min_minutes}-{max_minutes} мин., games: {games_info}, log: {log_path})"
                 )
             except FileNotFoundError:
                 self._logManager.add_log("❌ Не найден Node.js (команда node)")
                 return
             except Exception as exc:
+                self._close_booster_log(acc.login)
                 self._logManager.add_log(f"❌ [{acc.login}] Ошибка запуска booster: {exc}")
 
         self.accountsManager.selected_accounts.clear()
@@ -619,6 +667,7 @@ class AccountsControl(customtkinter.CTkTabview):
                     except Exception:
                         pass
                 self.booster_processes.pop(acc.login, None)
+                self._close_booster_log(acc.login)
                 
                 self._restore_account_color(acc)
                 if self.accounts_list and self.accounts_list.is_farmed_account(acc):
