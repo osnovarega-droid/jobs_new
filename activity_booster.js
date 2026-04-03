@@ -15,30 +15,67 @@ if (!login || !password || !sharedSecret || !steamIdArg) {
 
 const minIntervalMinutes = Math.max(1, Number.parseInt(minIntervalArg || '60', 10));
 const maxIntervalMinutes = Math.max(minIntervalMinutes, Number.parseInt(maxIntervalArg || '100', 10));
-const preferredAppIds = (preferredAppIdsArg || '')
+const rawPreferredAppIds = (preferredAppIdsArg || '')
     .split(',')
     .map((id) => Number.parseInt(String(id).trim(), 10))
-    .filter((id) => Number.isInteger(id) && id > 0)
+    .filter((id) => Number.isInteger(id) && id >= 0)
     .filter((id, idx, arr) => arr.indexOf(id) === idx)
-    .slice(0, 5);
+    .slice(0, 8);
 
 let availableGameIds = [];
 let rotateTimer = null;
 let isShuttingDown = false;
 let startedPlaying = false;
 let fixedPlayableIds = [];
+let mustPlayIds = [];
+let randomSlotsCount = 0;
+let lastRandomIds = [];
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 6;
+let ownershipLoaded = false;
+let reconnectTimer = null;
 
 function randInt(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-function pickRandomGames(appIds, count = 2) {
-    const pool = [...appIds];
+function pickRandomGames(appIds, count = 2, excludeIds = []) {
+    const excludeSet = new Set(excludeIds);
+    const uniquePool = appIds.filter((id, idx, arr) => arr.indexOf(id) === idx && !excludeSet.has(id));
+    const pool = [...uniquePool];
     for (let i = pool.length - 1; i > 0; i -= 1) {
         const j = Math.floor(Math.random() * (i + 1));
         [pool[i], pool[j]] = [pool[j], pool[i]];
     }
-    return pool.slice(0, Math.min(count, pool.length));
+
+    const picked = pool.slice(0, Math.min(count, pool.length));
+    if (picked.length < count && excludeIds.length > 0) {
+        const fallback = appIds.filter((id) => !picked.includes(id));
+        for (let i = fallback.length - 1; i > 0; i -= 1) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [fallback[i], fallback[j]] = [fallback[j], fallback[i]];
+        }
+        for (const id of fallback) {
+            if (picked.length >= count) {
+                break;
+            }
+            picked.push(id);
+        }
+    }
+
+    return picked.slice(0, count);
+}
+
+function composeCurrentActivity() {
+    const nextRandom = randomSlotsCount > 0
+        ? pickRandomGames(availableGameIds, randomSlotsCount, [...mustPlayIds, ...lastRandomIds])
+        : [];
+    if (nextRandom.length < randomSlotsCount) {
+        const refill = pickRandomGames(availableGameIds, randomSlotsCount - nextRandom.length, [...mustPlayIds, ...nextRandom]);
+        nextRandom.push(...refill);
+    }
+    lastRandomIds = nextRandom.slice(0, randomSlotsCount);
+    return [...mustPlayIds, ...lastRandomIds].slice(0, 4);
 }
 
 function scheduleNextRotate() {
@@ -57,13 +94,13 @@ function scheduleNextRotate() {
 
 function startRandomActivity() {
     startedPlaying = true;
-    const selected = fixedPlayableIds.length > 0 ? fixedPlayableIds : pickRandomGames(availableGameIds, 2);
+    const selected = composeCurrentActivity();
     if (selected.length === 0) {
         console.log('No games available for activity');
         return;
     }
 
-    console.log(`Playing random appids: ${selected.join(', ')}`);
+    console.log(`Playing appids: ${selected.join(', ')}`);
     client.setPersona(SteamUser.EPersonaState.Online);
     client.gamesPlayed(selected, true);
 }
@@ -77,6 +114,10 @@ function shutdown(code = 0) {
     if (rotateTimer) {
         clearTimeout(rotateTimer);
         rotateTimer = null;
+    }
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
     }
 
     try {
@@ -93,10 +134,67 @@ function shutdown(code = 0) {
     process.exit(code);
 }
 
+function scheduleReconnect(reason) {
+    if (isShuttingDown) {
+        return;
+    }
+    if (reconnectTimer) {
+        return;
+    }
+    reconnectAttempts += 1;
+    if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+        console.error(`[${login}] Too many reconnect attempts, stopping booster (${reason})`);
+        shutdown(8);
+        return;
+    }
+
+    const delaySeconds = Math.min(45, reconnectAttempts * 7);
+    console.log(`[${login}] Reconnect attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} in ${delaySeconds}s (${reason})`);
+    reconnectTimer = setTimeout(() => {
+        if (isShuttingDown) {
+            return;
+        }
+        try {
+            client.logOn({
+                accountName: login,
+                password,
+                twoFactorCode: SteamTotp.getAuthCode(sharedSecret),
+                machineName: `booster_${login}`,
+            });
+        } catch (err) {
+            console.error(`[${login}] Reconnect failed to start: ${err?.message || err}`);
+            scheduleReconnect('logon exception');
+        }
+    }, delaySeconds * 1000);
+}
+
+function startLogon() {
+    try {
+        client.logOn({
+            accountName: login,
+            password,
+            twoFactorCode: SteamTotp.getAuthCode(sharedSecret),
+            machineName: `booster_${login}`,
+        });
+    } catch (err) {
+        console.error(`[${login}] Initial logon failed to start: ${err?.message || err}`);
+        scheduleReconnect('initial logon exception');
+    }
+}
+
 client.on('loggedOn', () => { 
+    reconnectAttempts = 0;
+    reconnectTimer = null;
     console.log(`[${login}] Logged on`); 
     client.setPersona(SteamUser.EPersonaState.Online);
-    client.webLogOn();
+    if (!ownershipLoaded) {
+        client.webLogOn();
+    } else {
+        startRandomActivity();
+        if (!rotateTimer) {
+            scheduleNextRotate();
+        }
+    }
 });
 
 client.on('ownershipCached', async () => {
@@ -115,18 +213,41 @@ client.on('ownershipCached', async () => {
             return; 
         } 
 
-        if (preferredAppIds.length > 0) {
+        if (rawPreferredAppIds.length > 0) {
             const availableSet = new Set(availableGameIds);
-            fixedPlayableIds = preferredAppIds.filter((id) => availableSet.has(id));
-            if (fixedPlayableIds.length === 0) {
-                console.error(`[${login}] None of requested appids are present in the library: ${preferredAppIds.join(', ')}`);
+            fixedPlayableIds = rawPreferredAppIds
+                .filter((id) => id > 0 && availableSet.has(id))
+                .slice(0, 4);
+            const requestedFixed = rawPreferredAppIds.filter((id) => id > 0).slice(0, 4);
+            const hasRandomToken = rawPreferredAppIds.includes(0);
+            randomSlotsCount = hasRandomToken ? Math.max(0, 4 - fixedPlayableIds.length) : 0;
+            mustPlayIds = fixedPlayableIds.slice();
+
+            if (requestedFixed.length > 0 && fixedPlayableIds.length !== requestedFixed.length) {
+                const missing = requestedFixed.filter((id) => !fixedPlayableIds.includes(id));
+                console.error(`[${login}] Missing requested appids in library: ${missing.join(', ')}`);
                 shutdown(7);
                 return;
             }
-            console.log(`[${login}] Will play configured appids: ${fixedPlayableIds.join(', ')}`);
+
+            if (mustPlayIds.length === 0 && randomSlotsCount === 0) {
+                console.error(`[${login}] None of requested appids are present in the library: ${rawPreferredAppIds.join(', ')}`);
+                shutdown(7);
+                return;
+            }
+
+            if (randomSlotsCount > 0) {
+                console.log(`[${login}] Fixed appids: ${mustPlayIds.join(', ') || '-'}, random rotating slots: ${randomSlotsCount}`);
+            } else {
+                console.log(`[${login}] Will play configured appids: ${mustPlayIds.join(', ')}`);
+            }
+        } else {
+            mustPlayIds = [];
+            randomSlotsCount = Math.min(4, availableGameIds.length);
         }
 
         console.log(`[${login}] Found ${availableGameIds.length} games`);
+        ownershipLoaded = true;
         startRandomActivity();
         scheduleNextRotate();
     } catch (err) {
@@ -142,20 +263,15 @@ client.on('webSession', () => {
 });
 client.on('error', (err) => {
     console.error(`[${login}] Steam error: ${err?.message || err}`);
-    shutdown(4);
+    scheduleReconnect(`error: ${err?.message || err}`);
 });
 
 client.on('disconnected', (eresult, msg) => {
     console.error(`[${login}] Disconnected: ${msg || eresult}`);
-    shutdown(2);
+    scheduleReconnect(`disconnected: ${msg || eresult}`)
 });
 
 process.on('SIGINT', () => shutdown(0));
 process.on('SIGTERM', () => shutdown(0));
 
-client.logOn({
-    accountName: login,
-    password,
-    twoFactorCode: SteamTotp.getAuthCode(sharedSecret),
-    machineName: `booster_${login}`,
-}); 
+startLogon();
