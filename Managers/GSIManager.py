@@ -120,6 +120,9 @@ class GSIManager:
         self.accounts_list_frame = frame
         print("✅ GSIManager подключен к UI")
 
+    def _manual_farm_enabled(self):
+        return bool(self.settingsManager.get("ManualFarmEnabled", False))
+
     # =========================
     # runtime.json
     # =========================
@@ -811,6 +814,12 @@ class GSIManager:
             round_phase = round_info.get("phase")
             map_phase = map_info.get("phase")
 
+            if self._manual_farm_enabled():
+                if map_phase == "gameover" and self.match_state != MatchState.GAMEOVER:
+                    self.match_state = MatchState.GAMEOVER
+                    self._ui_log("🧰 Manual farm: game found, GSI/post-game automation skipped")
+                return "ok"
+
             ct = map_info.get("team_ct", {}).get("score", 0)
             t = map_info.get("team_t", {}).get("score", 0)
 
@@ -1016,6 +1025,10 @@ class GSIManager:
 
 
     def post_game_restart_flow(self):
+        if self._manual_farm_enabled():
+            self._ui_log("🧰 Manual farm: post-game flow skipped")
+            return
+
         try:
             self._ui_log("⏳ Жду 60 секунд после матча (Ctrl+Q чтобы отменить)...")
 
@@ -1067,6 +1080,10 @@ class GSIManager:
                 self._post_game_flow_running = False
 
     def _start_post_game_flow_once(self):
+        if self._manual_farm_enabled():
+            self._ui_log("🧰 Manual farm: post-game trigger skipped")
+            return
+
         now = time.time()
         with self._gameover_lock:
             if self._post_game_flow_running:
@@ -1132,6 +1149,10 @@ class GSIManager:
                 pass
 
     def _try_auto_switch_accounts_after_drop(self):
+        if self._manual_farm_enabled():
+            self._ui_log("🧰 Manual farm: automatic account switching disabled")
+            return False
+
         auto_switch = bool(self.settingsManager.get("AutomaticAccountSwitchingEnabled", True))
         if not auto_switch:
             self._ui_log("ℹ️ Automatic account switching: OFF — продолжаем фарм текущих аккаунтов")
