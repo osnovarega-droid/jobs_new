@@ -1539,13 +1539,17 @@ class App(customtkinter.CTk):
     def _build_config_section(self, parent):
         frame = customtkinter.CTkFrame(parent, fg_color="transparent")
         frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(0, weight=1)
+        config_scroll = customtkinter.CTkScrollableFrame(frame, fg_color="transparent")
+        config_scroll.grid(row=0, column=0, sticky="nsew")
+        config_scroll.grid_columnconfigure(0, weight=1)
 
-        header = customtkinter.CTkFrame(frame, fg_color="transparent")
+        header = customtkinter.CTkFrame(config_scroll, fg_color="transparent")
         header.grid(row=0, column=0, padx=12, pady=(10, 4), sticky="ew")
         customtkinter.CTkLabel(header, text="Configurations", font=customtkinter.CTkFont(size=24, weight="bold"), text_color=TXT_MAIN).grid(row=0, column=0, sticky="w")
         customtkinter.CTkLabel(header, text="Настройте автологику и пути Steam/CS2 в одном месте", font=customtkinter.CTkFont(size=11), text_color=TXT_MUTED).grid(row=1, column=0, pady=(4, 0), sticky="w")
 
-        card = customtkinter.CTkFrame(frame, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BG_BORDER)
+        card = customtkinter.CTkFrame(config_scroll, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BG_BORDER)
         card.grid(row=1, column=0, padx=12, pady=(0, 8), sticky="nsew")
         card.grid_columnconfigure(0, weight=1, minsize=150)
         card.grid_columnconfigure(1, weight=2, minsize=150)
@@ -1671,10 +1675,10 @@ class App(customtkinter.CTk):
         self.telegram_bot_set_proxies_button.grid(row=2, column=2, padx=(0, 10), pady=(0, 8), sticky="w")
         self._refresh_telegram_bot_block()
         
-        self.config_status_label = customtkinter.CTkLabel(frame, text="", text_color=TXT_MUTED, font=customtkinter.CTkFont(size=11, weight="bold"))
+        self.config_status_label = customtkinter.CTkLabel(config_scroll, text="", text_color=TXT_MUTED, font=customtkinter.CTkFont(size=11, weight="bold"))
         self.config_status_label.grid(row=2, column=0, padx=14, pady=(0, 2), sticky="e")
 
-        frame.grid_rowconfigure(1, weight=1)
+
         return frame
 
     def _create_labeled_switch(self, parent, row, title, description, setting_key, default=False, on_toggle=None):
