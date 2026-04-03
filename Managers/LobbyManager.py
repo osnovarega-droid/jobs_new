@@ -1145,21 +1145,25 @@ class LobbyManager:
         if not members:
             return True
 
-        deadline = time.time() + max_wait
+        deadline = None if max_wait is None else (time.time() + max_wait)
         warned_unknown = False
 
         while True:
             any_red = False
             all_green = True
+            checked_members = 0
 
             for acc in members:
                 hwnd = self._resolve_account_cs2_hwnd(acc)
                 if not hwnd:
+                    all_green = False
                     continue
                 try:
                     rect = win32gui.GetWindowRect(hwnd)
                 except Exception:
+                    all_green = False
                     continue
+                checked_members += 1
 
                 state = button_state(final_click_pos[0], final_click_pos[1], rect)
                 if state is None:
@@ -1180,10 +1184,13 @@ class LobbyManager:
             if not enforce_green:
                 return True
 
+            if checked_members < len(members):
+                all_green = False
+
             if all_green:
                 return True
 
-            if time.time() >= deadline:
+            if deadline is not None and time.time() >= deadline:
       
                 return False
 
@@ -1194,7 +1201,7 @@ class LobbyManager:
         self._logManager.add_log("⏱ 600s timeout without accepted match. Running recovery flow.")
         self._logManager.add_log("🔴→🟢 Timeout reached: forcing red buttons to green on leader windows (1 & 3)")
 
-        if not self._press_red_buttons_everywhere(final_click_pos, enforce_green=True, max_wait=20.0, leaders_only=True):
+        if not self._press_red_buttons_everywhere(final_click_pos, enforce_green=True, max_wait=None, leaders_only=True):
             return False
 
         self.press_esc_all_cs2_windows()
