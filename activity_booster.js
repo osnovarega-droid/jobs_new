@@ -225,15 +225,12 @@ client.on('ownershipCached', async () => {
 
             if (requestedFixed.length > 0 && fixedPlayableIds.length !== requestedFixed.length) {
                 const missing = requestedFixed.filter((id) => !fixedPlayableIds.includes(id));
-                console.error(`[${login}] Missing requested appids in library: ${missing.join(', ')}`);
-                shutdown(7);
-                return;
+                console.warn(`[${login}] Requested appids are not in library and will be ignored: ${missing.join(', ')}`);
             }
 
             if (mustPlayIds.length === 0 && randomSlotsCount === 0) {
-                console.error(`[${login}] None of requested appids are present in the library: ${rawPreferredAppIds.join(', ')}`);
-                shutdown(7);
-                return;
+                console.warn(`[${login}] Requested appids are unavailable. Falling back to random games from account library.`);
+                randomSlotsCount = Math.min(4, availableGameIds.length);
             }
 
             if (randomSlotsCount > 0) {
