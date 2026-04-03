@@ -152,15 +152,18 @@ class ControlFrame(customtkinter.CTkFrame):
             print("❌ Не найдено подходящих окон CS2 для расстановки")
             return
 
-        # 5) Ставим в линию 1-2-3-4... по списку аккаунтов
+        # 5) Ставим окна в сетку: строго по 5 окон в ряд, затем следующий ряд.
+        max_columns = 5
         placed = 0
         for idx, (login, pid, hwnd) in enumerate(ordered_windows):
-            x = idx * (window_width + spacing)
-            y = 0
+            col = idx % max_columns
+            row = idx // max_columns
+            x = col * (window_width + spacing)
+            y = row * (window_height + spacing)
             try:
                 win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
                 win32gui.MoveWindow(hwnd, x, y, window_width, window_height, True)
-                print(f"📍 {idx + 1}. {login} (PID {pid}) -> ({x},{y})")
+                print(f"📍 {idx + 1}. {login} (PID {pid}) -> row={row + 1}, col={col + 1}, pos=({x},{y})")
                 placed += 1
             except Exception as e:
                 print(f"⚠️ Не удалось переместить {login}: {e}")
