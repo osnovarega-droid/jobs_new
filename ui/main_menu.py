@@ -24,7 +24,8 @@ class MainMenu(customtkinter.CTkTabview):
         self.auto_accept_module = AutoAcceptModule()
 
         auto_accept_enabled = bool(self._settingsManager.get("AutoAcceptEnabled", True))
-        if auto_accept_enabled:
+        manual_farm_enabled = bool(self._settingsManager.get("ManualFarmEnabled", False))
+        if auto_accept_enabled and not manual_farm_enabled:
             self.auto_accept_module.start()
             print("🚀 AutoAcceptModule: АВТОЗАПУСК ✓")
 
