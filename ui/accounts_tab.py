@@ -74,19 +74,19 @@ class AccountsControl(customtkinter.CTkTabview):
         if not isinstance(game_appids, list):
             game_appids = []
 
-        parsed_game_appids = []
-        seen = set()
-        for app_id in game_appids:
-            app_text = str(app_id).strip()
-            if not app_text.isdigit():
-                continue
-            app_id_int = int(app_text)
-            if app_id_int <= 0 or app_id_int in seen:
-                continue
-            parsed_game_appids.append(app_id_int)
-            seen.add(app_id_int)
-            if len(parsed_game_appids) >= 5:
-                break
+        parsed_game_appids = [] 
+        seen = set() 
+        for app_id in game_appids: 
+            app_text = str(app_id).strip() 
+            if not app_text.isdigit(): 
+                continue 
+            app_id_int = int(app_text) 
+            if app_id_int < 0 or app_id_int in seen:
+                continue 
+            parsed_game_appids.append(app_id_int) 
+            seen.add(app_id_int) 
+            if len(parsed_game_appids) >= 8:
+                break 
 
         return min_minutes, max_minutes, parsed_game_appids
 
