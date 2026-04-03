@@ -7,14 +7,22 @@
     "RemoveBackground": true,
     "VendorID": 4318,
     "DeviceID": 8644,
-    "LooterInventory": "730/2,440/2,753/6",
-    "LooterTradeLink": "",
-    "AutoAcceptEnabled": true,
-    "AutoMatchInStartEnabled": true,
-    "AutomaticAccountSwitchingEnabled": true,
+    "LooterInventory": "440/2",
+    "LooterTradeLink": "https://steamcommunity.com/tradeoffer/new/?partner=1820312068&token=IfT_ec3_",
+    "AutoAcceptEnabled": false,
+    "AutoMatchInStartEnabled": false,
+    "AutomaticAccountSwitchingEnabled": false,
+    "ManualFarmEnabled": true,
     "LicenseVercelCheckUrl": "",
     "LicenseFirebaseUrl": "",
     "LicenseFirebaseToken": "",
     "TelegramBotToken": "",
-    "TelegramBotProxies": []
+    "TelegramBotProxies": [],
+    "ActivityBoosterMinMinutes": 65,
+    "ActivityBoosterMaxMinutes": 100,
+    "ActivityBoosterAccounts": {},
+    "ActivityBoosterGameAppIds": [
+        730,
+        0
+    ]
 }
