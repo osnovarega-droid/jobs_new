@@ -37,10 +37,8 @@ class AutoAcceptModule:
 
         AutoAcceptModule._disable_final_clicks = True
 
-        if AutoAcceptModule._last_disable_log_match_id != match_id:
-            AutoAcceptModule._last_disable_log_match_id = match_id
-
-            self.logManager.add_log("[A.Accept] auto accept found")
+        AutoAcceptModule._last_disable_log_match_id = match_id
+        self.logManager.add_log("[A.Accept] auto accept found")
 
     @staticmethod
     def _click_accept_button(acc, click_delay=0.2):
