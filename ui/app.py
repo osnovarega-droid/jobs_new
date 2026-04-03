@@ -1750,13 +1750,7 @@ class App(customtkinter.CTk):
             status.configure(text="✔", text_color=ACCENT_GREEN)
 
     def _on_auto_accept_toggle(self, enabled):
-        if enabled and bool(self.settings_manager.get("ManualFarmEnabled", False)):
-            self.settings_manager.set("AutoAcceptEnabled", False)
-            switch = getattr(self, "config_toggle_auto_accept", None)
-            if switch:
-                switch.deselect()
-            self.log_manager.add_log("🧰 Manual farm: Auto accept заблокирован")
-            enabled = False
+
         try:
             self.main_menu._lobbyManager.auto_accept = enabled
         except Exception:
@@ -1774,11 +1768,17 @@ class App(customtkinter.CTk):
     def _on_manual_farm_toggle(self, enabled):
         if not enabled:
             self.log_manager.add_log("ℹ️ Manual farm: OFF")
+            try:
+                module = self.main_menu.auto_accept_module
+                if (not bool(self.settings_manager.get("AutoAcceptEnabled", False))) and module._running:
+                    module.stop()
+            except Exception:
+                pass
             return
 
-        self.log_manager.add_log("🧰 Manual farm: ON — авто-логика отключена")
+        self.log_manager.add_log("🧰 Manual farm: ON")
         forced_off_keys = (
-            ("AutoAcceptEnabled", getattr(self, "config_toggle_auto_accept", None), self._on_auto_accept_toggle),
+
             ("AutoMatchInStartEnabled", getattr(self, "config_toggle_auto_match", None), None),
             ("AutomaticAccountSwitchingEnabled", getattr(self, "config_toggle_auto_account_switching", None), None),
         )
@@ -1789,7 +1789,12 @@ class App(customtkinter.CTk):
                 switch.deselect()
             if callback:
                 callback(False)
-
+        try:
+            module = self.main_menu.auto_accept_module
+            if not module._running:
+                module.start()
+        except Exception:
+            pass
     def _on_auto_match_toggle(self, enabled):
         if enabled and bool(self.settings_manager.get("ManualFarmEnabled", False)):
             self.settings_manager.set("AutoMatchInStartEnabled", False)
