@@ -687,6 +687,33 @@ class Account:
                                 0,
                                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
                             )
+                    if any(btn.window_text().strip() == "Continue" for btn in buttons):
+                        target = next((btn for btn in buttons if btn.window_text().strip() == "Continue"), None)
+                        if target:
+                            # Поднимаем окно ошибки Steam поверх остальных, чтобы клик по Continue гарантированно проходил.
+                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                            win32gui.SetWindowPos(
+                                hwnd,
+                                win32con.HWND_TOPMOST,
+                                0,
+                                0,
+                                0,
+                                0,
+                                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+                            )
+                            win32gui.SetForegroundWindow(hwnd)
+                            time.sleep(0.1)
+                            target.click_input()
+                            # Возвращаем обычный z-order после нажатия.
+                            win32gui.SetWindowPos(
+                                hwnd,
+                                win32con.HWND_NOTOPMOST,
+                                0,
+                                0,
+                                0,
+                                0,
+                                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+                            )
                     if any(btn.window_text().strip().lower() == "no thanks".lower() for btn in buttons):
                         target = next(
                             (btn for btn in buttons if btn.window_text().strip().lower() == "no thanks".lower()), None)
