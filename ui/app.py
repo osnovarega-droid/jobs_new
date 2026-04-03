@@ -1770,7 +1770,11 @@ class App(customtkinter.CTk):
             self.log_manager.add_log("ℹ️ Manual farm: OFF")
             try:
                 module = self.main_menu.auto_accept_module
-                if (not bool(self.settings_manager.get("AutoAcceptEnabled", False))) and module._running:
+
+                auto_accept_enabled = bool(self.settings_manager.get("AutoAcceptEnabled", False))
+                if auto_accept_enabled and not module._running:
+                    module.start()
+                elif (not auto_accept_enabled) and module._running:
                     module.stop()
             except Exception:
                 pass
