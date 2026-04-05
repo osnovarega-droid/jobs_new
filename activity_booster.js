@@ -2,7 +2,9 @@ const SteamUser = require('steam-user');
 const SteamTotp = require('steam-totp');
 
 const client = new SteamUser({
-    enablePicsCache: true,
+    // Keep process footprint low for multi-account boosting.
+    // PICS cache can consume a lot of memory per process and is not needed here.
+    enablePicsCache: false,
 });
 
 const [, , login, password, sharedSecret, steamIdArg, minIntervalArg, maxIntervalArg, preferredAppIdsArg] = process.argv;
@@ -34,6 +36,7 @@ let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 6;
 let ownershipLoaded = false;
 let reconnectTimer = null;
+let shouldLoadOwnership = true;
 
 function randInt(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -64,6 +67,27 @@ function pickRandomGames(appIds, count = 2, excludeIds = []) {
     }
 
     return picked.slice(0, count);
+}
+
+function parsePreferredGamePlan() {
+    if (rawPreferredAppIds.length === 0) {
+        mustPlayIds = [];
+        randomSlotsCount = 0;
+        shouldLoadOwnership = true;
+        return;
+    }
+
+    const requestedFixed = rawPreferredAppIds.filter((id) => id > 0).slice(0, 4);
+    const hasRandomToken = rawPreferredAppIds.includes(0);
+
+    // Use Set to keep IDs unique without repeated O(n²) scans.
+    const uniqueFixed = Array.from(new Set(requestedFixed)).slice(0, 4);
+    mustPlayIds = uniqueFixed;
+    randomSlotsCount = hasRandomToken ? Math.max(0, 4 - mustPlayIds.length) : 0;
+
+    // If no random slots requested, we can skip ownership loading entirely,
+    // which noticeably lowers RAM usage per account.
+    shouldLoadOwnership = randomSlotsCount > 0 || mustPlayIds.length === 0;
 }
 
 function composeCurrentActivity() {
@@ -188,9 +212,18 @@ client.on('loggedOn', () => {
     reconnectTimer = null;
     console.log(`[${login}] Logged on`); 
     client.setPersona(SteamUser.EPersonaState.Online);
-    if (!ownershipLoaded) {
+    // Always start fixed appids immediately if they were explicitly configured.
+    // This guarantees activity even if ownership events are delayed/missing.
+    if (mustPlayIds.length > 0 && !startedPlaying) {
+        startRandomActivity();
+        if (!rotateTimer) {
+            scheduleNextRotate();
+        }
+    }
+
+    if (!ownershipLoaded && shouldLoadOwnership) {
         client.webLogOn();
-    } else {
+    } else if (!startedPlaying) {
         startRandomActivity();
         if (!rotateTimer) {
             scheduleNextRotate();
@@ -246,7 +279,9 @@ client.on('ownershipCached', async () => {
         console.log(`[${login}] Found ${availableGameIds.length} games`);
         ownershipLoaded = true;
         startRandomActivity();
-        scheduleNextRotate();
+        if (!rotateTimer) {
+            scheduleNextRotate();
+        }
     } catch (err) {
         console.error(`[${login}] Failed to build owned app list: ${err.message}`);
         shutdown(6);
@@ -270,5 +305,14 @@ client.on('disconnected', (eresult, msg) => {
 
 process.on('SIGINT', () => shutdown(0));
 process.on('SIGTERM', () => shutdown(0));
+
+parsePreferredGamePlan();
+
+if (!shouldLoadOwnership && mustPlayIds.length > 0) {
+    // Lightweight mode: strictly use configured app ids and avoid loading ownership data.
+    availableGameIds = mustPlayIds.slice();
+    ownershipLoaded = true;
+    console.log(`[${login}] Lightweight mode enabled: ownership cache skipped, fixed appids: ${mustPlayIds.join(', ')}`);
+}
 
 startLogon();
