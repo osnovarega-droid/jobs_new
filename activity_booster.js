@@ -3,9 +3,9 @@ const SteamTotp = require('steam-totp');
 const https = require('https');
 
 const client = new SteamUser({
-    // Keep process footprint low for multi-account boosting.
-    // PICS cache can consume a lot of memory per process and is not needed here.
-    enablePicsCache: false,
+    // Ownership and random rotation rely on `getOwnedApps`.
+    // This requires PICS cache support in steam-user.
+    enablePicsCache: true,
 });
 
 const [, , login, password, sharedSecret, steamIdArg, minIntervalArg, maxIntervalArg, preferredAppIdsArg] = process.argv;
@@ -39,6 +39,9 @@ let ownershipLoaded = false;
 let reconnectTimer = null;
 let shouldLoadOwnership = true;
 let ownershipLoadStarted = false;
+let ownershipRetryTimer = null;
+let ownershipRetryAttempts = 0;
+let webCookies = [];
 
 function randInt(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -49,25 +52,37 @@ function parseCommunityGamesFromHtml(html) {
         return [];
     }
 
+    const fromRgGames = parseRgGamesFromHtml(html);
+    if (fromRgGames.length > 0) {
+        return Array.from(new Set(fromRgGames.map((game) => game.appid)));
+    }
+
     const appIdSet = new Set();
-    const appidRegex = /\"appid\"\s*:\s*(\d+)/g;
-    let match = null;
-    while ((match = appidRegex.exec(html)) !== null) {
-        const id = Number.parseInt(match[1], 10);
-        if (Number.isInteger(id) && id > 0) {
-            appIdSet.add(id);
+    // Keep parsing conservative here to avoid grabbing unrelated app links from page chrome/recommendations.
+    const patterns = [
+        /"appid"\s*:\s*(\d+)/gi,
+        /\bappid\s*:\s*(\d+)/gi,
+        /<appID>\s*(\d+)\s*<\/appID>/gi,
+    ];
+
+    for (const pattern of patterns) {
+        let match = null;
+        while ((match = pattern.exec(html)) !== null) {
+            const id = Number.parseInt(match[1], 10);
+            if (Number.isInteger(id) && id > 0) {
+                appIdSet.add(id);
+            }
         }
     }
 
     return Array.from(appIdSet);
 }
 
-function fetchOwnedAppsFromCommunity(steamId) {
+function fetchUrl(url, headers = {}) {
     return new Promise((resolve) => {
-        const url = `https://steamcommunity.com/profiles/${steamId}/games?tab=all`;
-        const req = https.get(url, { timeout: 15000 }, (res) => {
+        const req = https.get(url, { timeout: 15000, headers }, (res) => {
             if (!res || (res.statusCode && res.statusCode >= 400)) {
-                resolve([]);
+                resolve('');
                 return;
             }
 
@@ -77,16 +92,97 @@ function fetchOwnedAppsFromCommunity(steamId) {
                 body += chunk;
             });
             res.on('end', () => {
-                resolve(parseCommunityGamesFromHtml(body));
+                resolve(body);
             });
         });
 
-        req.on('error', () => resolve([]));
+        req.on('error', () => resolve(''));
         req.on('timeout', () => {
             req.destroy();
-            resolve([]);
+            resolve('');
         });
     });
+}
+
+function parseRgGamesFromHtml(html) {
+    if (typeof html !== 'string' || !html.trim()) {
+        return [];
+    }
+
+    // On /my/games?tab=all Steam renders JS object: var rgGames = [...];
+    const rgGamesMatch = html.match(/var\s+rgGames\s*=\s*(\[[\s\S]*?\]);/i);
+    if (!rgGamesMatch) {
+        return [];
+    }
+
+    try {
+        const games = JSON.parse(rgGamesMatch[1]);
+        if (!Array.isArray(games)) {
+            return [];
+        }
+        return games
+            .map((game) => ({
+                appid: Number.parseInt(String(game?.appid ?? ''), 10),
+                name: String(game?.name || '').trim(),
+            }))
+            .filter((game) => Number.isInteger(game.appid) && game.appid > 0);
+    } catch (_) {
+        return [];
+    }
+}
+
+async function fetchOwnedAppsFromMyProfile() {
+    if (!Array.isArray(webCookies) || webCookies.length === 0) {
+        return [];
+    }
+
+    const headers = {
+        Cookie: webCookies.join('; '),
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        Referer: 'https://steamcommunity.com/my/games/?tab=all',
+    };
+
+    const urls = [
+        'https://steamcommunity.com/my/games/?tab=all',
+        'https://steamcommunity.com/id/me/games/?tab=all',
+    ];
+
+    for (const url of urls) {
+        const body = await fetchUrl(url, headers);
+        const games = parseRgGamesFromHtml(body);
+        if (games.length > 0) {
+            const appIds = Array.from(new Set(games.map((game) => game.appid)));
+            const sampleTitles = games
+                .map((game) => game.name)
+                .filter(Boolean)
+                .slice(0, 5)
+                .join(', ');
+            console.log(`[${login}] Ownership via authenticated profile: ${games.length} games (${sampleTitles || 'titles unavailable'})`);
+            return appIds;
+        }
+    }
+
+    return [];
+}
+
+async function fetchOwnedAppsFromCommunity(steamId) {
+    const urls = [
+        `https://steamcommunity.com/profiles/${steamId}/games?tab=all&l=english`,
+        `https://steamcommunity.com/profiles/${steamId}/games?tab=all`,
+        `https://steamcommunity.com/profiles/${steamId}/games?xml=1`,
+        `https://steamcommunity.com/profiles/${steamId}/games/?xml=1`,
+    ];
+
+    for (const url of urls) {
+        const body = await fetchUrl(url);
+        const appIds = parseCommunityGamesFromHtml(body);
+        if (appIds.length > 0) {
+            console.log(`[${login}] Ownership fallback succeeded via ${url} (${appIds.length} appids)`);
+            return appIds;
+        }
+    }
+
+    return [];
 }
 
 function startIfReady() {
@@ -106,13 +202,23 @@ async function loadOwnershipAndStart() {
     ownershipLoadStarted = true;
 
     try {
+        let picsCacheNotReady = false;
         try {
             const appIdsFromLicenses = client.getOwnedApps({ excludeShared: true }) || [];
             if (Array.isArray(appIdsFromLicenses) && appIdsFromLicenses.length > 0) {
                 availableGameIds = appIdsFromLicenses;
             }
         } catch (err) {
-            console.warn(`[${login}] License cache unavailable, will use community profile fallback: ${err?.message || err}`);
+            const errText = String(err?.message || err || '');
+            picsCacheNotReady = /no data in pics package cache yet/i.test(errText);
+            console.warn(`[${login}] License cache unavailable, will use community profile fallback: ${errText}`);
+        }
+
+        if (availableGameIds.length === 0) {
+            const appIdsFromMyProfile = await fetchOwnedAppsFromMyProfile();
+            if (appIdsFromMyProfile.length > 0) {
+                availableGameIds = appIdsFromMyProfile;
+            }
         }
 
         if (availableGameIds.length === 0) {
@@ -124,6 +230,21 @@ async function loadOwnershipAndStart() {
         }
 
         if (availableGameIds.length === 0) {
+            if (picsCacheNotReady && ownershipRetryAttempts < 4) {
+                ownershipLoadStarted = false;
+                ownershipRetryAttempts += 1;
+                const retryDelayMs = 4000 * ownershipRetryAttempts;
+                if (ownershipRetryTimer) {
+                    clearTimeout(ownershipRetryTimer);
+                }
+                ownershipRetryTimer = setTimeout(() => {
+                    ownershipRetryTimer = null;
+                    loadOwnershipAndStart();
+                }, retryDelayMs);
+                console.warn(`[${login}] PICS cache not ready yet, retrying ownership load in ${Math.round(retryDelayMs / 1000)}s (${ownershipRetryAttempts}/4)`);
+                return;
+            }
+
             if (mustPlayIds.length > 0) {
                 console.warn(`[${login}] Could not load full library, continuing with fixed appids only`);
                 availableGameIds = mustPlayIds.slice();
@@ -165,6 +286,14 @@ async function loadOwnershipAndStart() {
 
         console.log(`[${login}] Found ${availableGameIds.length} games`);
         ownershipLoaded = true;
+        ownershipRetryAttempts = 0;
+
+        // If we already started with fixed appids only, refresh activity immediately
+        // once library data arrives so random slots become active without waiting for next rotation.
+        if (startedPlaying && randomSlotsCount > 0) {
+            startRandomActivity();
+        }
+
         startIfReady();
     } catch (err) {
         console.error(`[${login}] Failed to build owned app list: ${err?.message || err}`);
@@ -273,6 +402,10 @@ function shutdown(code = 0) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
     }
+    if (ownershipRetryTimer) {
+        clearTimeout(ownershipRetryTimer);
+        ownershipRetryTimer = null;
+    }
 
     try {
         client.gamesPlayed([]);
@@ -342,6 +475,11 @@ client.on('loggedOn', () => {
     reconnectTimer = null;
     console.log(`[${login}] Logged on`); 
     client.setPersona(SteamUser.EPersonaState.Online);
+    try {
+        client.webLogOn();
+    } catch (_) {
+        // noop
+    }
 
     // Always start fixed appids immediately if they were explicitly configured.
     // This guarantees activity even if ownership loading is delayed.
@@ -362,7 +500,10 @@ client.on('licenses', () => {
     }
 });
 
-client.on('webSession', () => {
+client.on('webSession', (_sessionId, cookies) => {
+    if (Array.isArray(cookies) && cookies.length > 0) {
+        webCookies = cookies;
+    }
     if (!startedPlaying) {
         console.log(`[${login}] Web session started`);
     }
