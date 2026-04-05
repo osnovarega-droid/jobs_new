@@ -167,15 +167,25 @@ async function fetchOwnedAppsFromMyProfile() {
 
 async function fetchOwnedAppsFromCommunity(steamId) {
     const urls = [
-        `https://steamcommunity.com/profiles/${steamId}/games?tab=all&l=english`,
-        `https://steamcommunity.com/profiles/${steamId}/games?tab=all`,
         `https://steamcommunity.com/profiles/${steamId}/games?xml=1`,
         `https://steamcommunity.com/profiles/${steamId}/games/?xml=1`,
+        `https://steamcommunity.com/profiles/${steamId}/games?tab=all&l=english`,
+        `https://steamcommunity.com/profiles/${steamId}/games?tab=all`,
     ];
 
     for (const url of urls) {
         const body = await fetchUrl(url);
-        const appIds = parseCommunityGamesFromHtml(body);
+        let appIds = [];
+
+        if (url.includes('xml=1')) {
+            appIds = parseCommunityGamesFromHtml(body);
+        } else {
+            // For HTML tabs we trust only rgGames payload, to avoid accidental overcount
+            // from unrelated app links in the page chrome.
+            const rgGames = parseRgGamesFromHtml(body);
+            appIds = Array.from(new Set(rgGames.map((game) => game.appid)));
+        }
+
         if (appIds.length > 0) {
             console.log(`[${login}] Ownership fallback succeeded via ${url} (${appIds.length} appids)`);
             return appIds;
