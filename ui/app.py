@@ -1768,16 +1768,7 @@ class App(customtkinter.CTk):
     def _on_manual_farm_toggle(self, enabled):
         if not enabled:
             self.log_manager.add_log("ℹ️ Manual farm: OFF")
-            try:
-                module = self.main_menu.auto_accept_module
 
-                auto_accept_enabled = bool(self.settings_manager.get("AutoAcceptEnabled", False))
-                if auto_accept_enabled and not module._running:
-                    module.start()
-                elif (not auto_accept_enabled) and module._running:
-                    module.stop()
-            except Exception:
-                pass
             return
 
         self.log_manager.add_log("🧰 Manual farm: ON")
@@ -1793,12 +1784,7 @@ class App(customtkinter.CTk):
                 switch.deselect()
             if callback:
                 callback(False)
-        try:
-            module = self.main_menu.auto_accept_module
-            if not module._running:
-                module.start()
-        except Exception:
-            pass
+
     def _on_auto_match_toggle(self, enabled):
         if enabled and bool(self.settings_manager.get("ManualFarmEnabled", False)):
             self.settings_manager.set("AutoMatchInStartEnabled", False)
