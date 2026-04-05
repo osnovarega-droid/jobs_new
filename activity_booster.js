@@ -1,5 +1,6 @@
 const SteamUser = require('steam-user');
 const SteamTotp = require('steam-totp');
+const https = require('https');
 
 const client = new SteamUser({
     // Keep process footprint low for multi-account boosting.
@@ -37,9 +38,129 @@ const MAX_RECONNECT_ATTEMPTS = 6;
 let ownershipLoaded = false;
 let reconnectTimer = null;
 let shouldLoadOwnership = true;
+let ownershipLoadStarted = false;
 
 function randInt(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function parseCommunityGamesFromHtml(html) {
+    if (typeof html !== 'string' || !html.trim()) {
+        return [];
+    }
+
+    const appIdSet = new Set();
+    const appidRegex = /\"appid\"\s*:\s*(\d+)/g;
+    let match = null;
+    while ((match = appidRegex.exec(html)) !== null) {
+        const id = Number.parseInt(match[1], 10);
+        if (Number.isInteger(id) && id > 0) {
+            appIdSet.add(id);
+        }
+    }
+
+    return Array.from(appIdSet);
+}
+
+function fetchOwnedAppsFromCommunity(steamId) {
+    return new Promise((resolve) => {
+        const url = `https://steamcommunity.com/profiles/${steamId}/games?tab=all`;
+        const req = https.get(url, { timeout: 15000 }, (res) => {
+            if (!res || (res.statusCode && res.statusCode >= 400)) {
+                resolve([]);
+                return;
+            }
+
+            let body = '';
+            res.setEncoding('utf8');
+            res.on('data', (chunk) => {
+                body += chunk;
+            });
+            res.on('end', () => {
+                resolve(parseCommunityGamesFromHtml(body));
+            });
+        });
+
+        req.on('error', () => resolve([]));
+        req.on('timeout', () => {
+            req.destroy();
+            resolve([]);
+        });
+    });
+}
+
+function startIfReady() {
+    if (startedPlaying) {
+        return;
+    }
+    startRandomActivity();
+    if (!rotateTimer) {
+        scheduleNextRotate();
+    }
+}
+
+async function loadOwnershipAndStart() {
+    if (ownershipLoadStarted || ownershipLoaded) {
+        return;
+    }
+    ownershipLoadStarted = true;
+
+    try {
+        const appIdsFromLicenses = client.getOwnedApps({ excludeShared: true }) || [];
+        if (Array.isArray(appIdsFromLicenses) && appIdsFromLicenses.length > 0) {
+            availableGameIds = appIdsFromLicenses;
+        }
+
+        if (availableGameIds.length === 0) {
+            const appIdsFromCommunity = await fetchOwnedAppsFromCommunity(steamIdArg);
+            if (appIdsFromCommunity.length > 0) {
+                console.log(`[${login}] Ownership fallback: loaded ${appIdsFromCommunity.length} appids from community profile`);
+                availableGameIds = appIdsFromCommunity;
+            }
+        }
+
+        if (availableGameIds.length === 0) {
+            console.error(`[${login}] Could not find any games on account`);
+            shutdown(5);
+            return;
+        }
+
+        if (rawPreferredAppIds.length > 0) {
+            fixedPlayableIds = rawPreferredAppIds
+                .filter((id) => id > 0)
+                .slice(0, 4);
+            const requestedFixed = rawPreferredAppIds.filter((id) => id > 0).slice(0, 4);
+            const hasRandomToken = rawPreferredAppIds.includes(0);
+            randomSlotsCount = hasRandomToken ? Math.max(0, 4 - fixedPlayableIds.length) : 0;
+            mustPlayIds = fixedPlayableIds.slice();
+
+            if (requestedFixed.length > 0 && fixedPlayableIds.length !== requestedFixed.length) {
+                const missing = requestedFixed.filter((id) => !fixedPlayableIds.includes(id));
+                console.warn(`[${login}] Requested appids are invalid and will be ignored: ${missing.join(', ')}`);
+            }
+
+            if (mustPlayIds.length === 0 && randomSlotsCount === 0) {
+                console.warn(`[${login}] Requested appids are unavailable. Falling back to random games from account library.`);
+                randomSlotsCount = Math.min(4, availableGameIds.length);
+            }
+
+            if (randomSlotsCount > 0) {
+                console.log(`[${login}] Fixed appids: ${mustPlayIds.join(', ') || '-'}, random rotating slots: ${randomSlotsCount}`);
+            } else {
+                console.log(`[${login}] Will play configured appids: ${mustPlayIds.join(', ')}`);
+            }
+        } else {
+            mustPlayIds = [];
+            randomSlotsCount = Math.min(4, availableGameIds.length);
+        }
+
+        console.log(`[${login}] Found ${availableGameIds.length} games`);
+        ownershipLoaded = true;
+        startIfReady();
+    } catch (err) {
+        console.error(`[${login}] Failed to build owned app list: ${err?.message || err}`);
+        shutdown(6);
+    }
 }
 
 function pickRandomGames(appIds, count = 2, excludeIds = []) {
@@ -212,85 +333,32 @@ client.on('loggedOn', () => {
     reconnectTimer = null;
     console.log(`[${login}] Logged on`); 
     client.setPersona(SteamUser.EPersonaState.Online);
+
     // Always start fixed appids immediately if they were explicitly configured.
-    // This guarantees activity even if ownership events are delayed/missing.
+    // This guarantees activity even if ownership loading is delayed.
     if (mustPlayIds.length > 0 && !startedPlaying) {
-        startRandomActivity();
-        if (!rotateTimer) {
-            scheduleNextRotate();
-        }
+        startIfReady();
     }
 
     if (!ownershipLoaded && shouldLoadOwnership) {
-        client.webLogOn();
-    } else if (!startedPlaying) {
-        startRandomActivity();
-        if (!rotateTimer) {
-            scheduleNextRotate();
-        }
+        loadOwnershipAndStart();
+    } else {
+        startIfReady();
     }
 });
 
-client.on('ownershipCached', async () => {
-    try {
-        availableGameIds = client.getOwnedApps({
-            excludeShared: true,
-        });
-
-        if (!Array.isArray(availableGameIds) || availableGameIds.length === 0) {
-            availableGameIds = client.getOwnedApps({ excludeShared: true }) || [];
-        }
-
-        if (availableGameIds.length === 0) { 
-            console.error(`[${login}] Could not find any games on account`); 
-            shutdown(5); 
-            return; 
-        } 
- 
-        if (rawPreferredAppIds.length > 0) {
-            fixedPlayableIds = rawPreferredAppIds
-                .filter((id) => id > 0)
-                .slice(0, 4);
-            const requestedFixed = rawPreferredAppIds.filter((id) => id > 0).slice(0, 4);
-            const hasRandomToken = rawPreferredAppIds.includes(0);
-            randomSlotsCount = hasRandomToken ? Math.max(0, 4 - fixedPlayableIds.length) : 0;
-            mustPlayIds = fixedPlayableIds.slice();
-
-            if (requestedFixed.length > 0 && fixedPlayableIds.length !== requestedFixed.length) {
-                const missing = requestedFixed.filter((id) => !fixedPlayableIds.includes(id));
-                console.warn(`[${login}] Requested appids are invalid and will be ignored: ${missing.join(', ')}`);
-            }
-
-            if (mustPlayIds.length === 0 && randomSlotsCount === 0) {
-                console.warn(`[${login}] Requested appids are unavailable. Falling back to random games from account library.`);
-                randomSlotsCount = Math.min(4, availableGameIds.length);
-            }
-
-            if (randomSlotsCount > 0) {
-                console.log(`[${login}] Fixed appids: ${mustPlayIds.join(', ') || '-'}, random rotating slots: ${randomSlotsCount}`);
-            } else {
-                console.log(`[${login}] Will play configured appids: ${mustPlayIds.join(', ')}`);
-            }
-        } else {
-            mustPlayIds = [];
-            randomSlotsCount = Math.min(4, availableGameIds.length);
-        }
-
-        console.log(`[${login}] Found ${availableGameIds.length} games`);
-        ownershipLoaded = true;
-        startRandomActivity();
-        if (!rotateTimer) {
-            scheduleNextRotate();
-        }
-    } catch (err) {
-        console.error(`[${login}] Failed to build owned app list: ${err.message}`);
-        shutdown(6);
+client.on('licenses', () => {
+    if (shouldLoadOwnership && !ownershipLoaded) {
+        loadOwnershipAndStart();
     }
 });
 
 client.on('webSession', () => {
     if (!startedPlaying) {
         console.log(`[${login}] Web session started`);
+    }
+    if (shouldLoadOwnership && !ownershipLoaded) {
+        loadOwnershipAndStart();
     }
 });
 client.on('error', (err) => {
