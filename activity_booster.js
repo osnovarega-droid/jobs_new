@@ -106,9 +106,13 @@ async function loadOwnershipAndStart() {
     ownershipLoadStarted = true;
 
     try {
-        const appIdsFromLicenses = client.getOwnedApps({ excludeShared: true }) || [];
-        if (Array.isArray(appIdsFromLicenses) && appIdsFromLicenses.length > 0) {
-            availableGameIds = appIdsFromLicenses;
+        try {
+            const appIdsFromLicenses = client.getOwnedApps({ excludeShared: true }) || [];
+            if (Array.isArray(appIdsFromLicenses) && appIdsFromLicenses.length > 0) {
+                availableGameIds = appIdsFromLicenses;
+            }
+        } catch (err) {
+            console.warn(`[${login}] License cache unavailable, will use community profile fallback: ${err?.message || err}`);
         }
 
         if (availableGameIds.length === 0) {
@@ -120,9 +124,14 @@ async function loadOwnershipAndStart() {
         }
 
         if (availableGameIds.length === 0) {
-            console.error(`[${login}] Could not find any games on account`);
-            shutdown(5);
-            return;
+            if (mustPlayIds.length > 0) {
+                console.warn(`[${login}] Could not load full library, continuing with fixed appids only`);
+                availableGameIds = mustPlayIds.slice();
+            } else {
+                console.error(`[${login}] Could not find any games on account`);
+                shutdown(5);
+                return;
+            }
         }
 
         if (rawPreferredAppIds.length > 0) {
